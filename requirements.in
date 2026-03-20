@@ -1,0 +1,12 @@
+# Direct dependencies (unpinned) — used with: uv add -r requirements.in -c requirements.txt
+datasets
+sentence-transformers
+langchain-text-splitters
+hnswlib
+httpx
+matplotlib
+numpy
+pytest
+hypothesis
+respx
+tomli

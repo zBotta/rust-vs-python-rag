@@ -1,0 +1,21 @@
+# Python dependencies for the RAG benchmark
+# Pinned exact versions for reproducibility (Requirement 10.4)
+
+# Core pipeline
+datasets==2.19.1
+sentence-transformers==2.7.0
+langchain-text-splitters==0.2.0
+hnswlib==0.8.0
+httpx==0.27.0
+
+# Report generation
+matplotlib==3.9.0
+numpy==1.26.4
+
+# Testing
+pytest==8.2.0
+hypothesis==6.100.1
+respx==0.21.1
+
+# Utilities
+tomli==2.0.1
