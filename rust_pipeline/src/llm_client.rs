@@ -82,9 +82,10 @@ pub fn generate(
     query: &str,
     chunks: &[String],
     llm_host: &str,
+    model_name: &str,
     max_retries: u32,
 ) -> Result<LLMResponse, LlmError> {
-    let model = std::env::var("BENCHMARK_MODEL").unwrap_or_else(|_| "llama3.2:3b".to_string());
+    let model = std::env::var("BENCHMARK_MODEL").unwrap_or_else(|_| model_name.to_string());
     let prompt = build_prompt(chunks, query);
 
     let url = format!("{}/api/generate", llm_host);
@@ -125,7 +126,14 @@ fn attempt_generate(url: &str, model: &str, prompt: &str) -> Result<LLMResponse,
     let body_bytes = serde_json::to_vec(&request_body)?;
 
     // Use a blocking reqwest client
-    let client = reqwest::blocking::Client::new();
+    let disable_ssl = std::env::var("DISABLE_SSL_VERIFY")
+        .map(|v| matches!(v.to_lowercase().as_str(), "1" | "true" | "yes"))
+        .unwrap_or(false);
+    let client = reqwest::blocking::Client::builder()
+        .danger_accept_invalid_certs(disable_ssl)
+        .timeout(std::time::Duration::from_secs(300))
+        .build()
+        .map_err(|e| LlmError::Http(e.to_string()))?;
     let response = client
         .post(url)
         .header("Content-Type", "application/json")
@@ -345,7 +353,7 @@ mod tests {
     #[test]
     fn test_generate_fails_after_retries_on_connection_refused() {
         // Use a port that should not be listening
-        let result = generate("test query", &[], "http://127.0.0.1:19999", 3);
+        let result = generate("test query", &[], "http://127.0.0.1:19999", "llama3.2:3b", 3);
         // generate() returns Ok(LLMResponse { failed: true }) after exhausting retries
         assert!(result.is_ok());
         let resp = result.unwrap();

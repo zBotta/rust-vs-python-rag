@@ -2,14 +2,14 @@
 # All parameters controlling the RAG pipeline benchmark.
 
 # --- Required keys ---
-dataset_name    = "wikipedia"
-dataset_subset  = "20220301.simple"
+dataset_name    = "wikimedia/wikipedia"
+dataset_subset  = "20231101.simple"
 num_documents   = 1000
 chunk_size      = 512
 chunk_overlap   = 64
 embedding_model = "sentence-transformers/all-MiniLM-L6-v2"
 top_k           = 5
-llm_model       = "llama3.2:3b"
+llm_model       = "lfm2-8b"
 llm_host        = "http://localhost:11434"
 query_set_path  = "query_set.json"
 output_dir      = "output/"

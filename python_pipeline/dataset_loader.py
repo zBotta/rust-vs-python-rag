@@ -1,6 +1,8 @@
 """Dataset loader — loads documents from HuggingFace datasets library."""
 from __future__ import annotations
 
+import os
+
 from python_pipeline.config import BenchmarkError
 
 
@@ -36,7 +38,7 @@ def load_documents(dataset_name: str, subset: str, num_docs: int) -> list[str]:
     load_dataset = _import_load_dataset()
 
     try:
-        ds = load_dataset(dataset_name, subset, split="train", streaming=True)
+        ds = load_dataset(dataset_name, subset, split="train", streaming=True, trust_remote_code=False)
     except DatasetLoadError:
         raise
     except Exception as exc:

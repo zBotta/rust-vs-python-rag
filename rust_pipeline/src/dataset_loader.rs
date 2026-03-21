@@ -24,6 +24,103 @@ pub enum DatasetError {
     },
 }
 
+/// Build an `hf_hub` Api, using the standard constructor.
+/// SSL bypass for corporate proxies is handled via the OS certificate store.
+/// If DISABLE_SSL_VERIFY=1, we rely on the dataset being pre-cached by the
+/// Python pipeline run (which handles SSL bypass itself).
+fn build_api() -> Result<Api, String> {
+    Api::new().map_err(|e| format!("Failed to init HF Hub API: {e}"))
+}
+
+/// Resolve local parquet files for a dataset subset.
+///
+/// When `DISABLE_SSL_VERIFY=1` (corporate proxy), the network is bypassed and
+/// files are read from `./data/<subset>/` which must have been pre-downloaded
+/// by the Python pipeline. Falls back to `hf-hub` network download otherwise.
+fn resolve_parquet_files(
+    dataset_name: &str,
+    subset: &str,
+) -> Result<Vec<std::path::PathBuf>, DatasetError> {
+    let disable_ssl = std::env::var("DISABLE_SSL_VERIFY")
+        .map(|v| matches!(v.to_lowercase().as_str(), "1" | "true" | "yes"))
+        .unwrap_or(false);
+
+    // Check for local data directory first (works with or without SSL bypass).
+    let local_dir = std::path::Path::new("data").join(subset);
+    if local_dir.exists() {
+        let files: Vec<_> = std::fs::read_dir(&local_dir)
+            .map_err(|e| DatasetError::LoadError {
+                dataset: dataset_name.to_string(),
+                subset: subset.to_string(),
+                reason: format!("Failed to read local data dir: {e}"),
+            })?
+            .filter_map(|e| e.ok())
+            .map(|e| e.path())
+            .filter(|p| p.extension().map(|x| x == "parquet").unwrap_or(false))
+            .collect();
+
+        if !files.is_empty() {
+            return Ok(files);
+        }
+    }
+
+    if disable_ssl {
+        return Err(DatasetError::NetworkError {
+            dataset: dataset_name.to_string(),
+            subset: subset.to_string(),
+            reason: format!(
+                "DISABLE_SSL_VERIFY=1 but no local parquet files found in ./data/{subset}/. \
+                 Run the Python pipeline first to pre-download the dataset."
+            ),
+        });
+    }
+
+    // Fall back to hf-hub network download.
+    let api = build_api().map_err(|e| DatasetError::NetworkError {
+        dataset: dataset_name.to_string(),
+        subset: subset.to_string(),
+        reason: e,
+    })?;
+    let repo = api.dataset(dataset_name.to_string());
+    let info = repo.info().map_err(|e| DatasetError::NetworkError {
+        dataset: dataset_name.to_string(),
+        subset: subset.to_string(),
+        reason: format!("Failed to fetch dataset info: {e}"),
+    })?;
+
+    let parquet_names: Vec<String> = info
+        .siblings
+        .iter()
+        .filter_map(|s| {
+            let name = &s.rfilename;
+            if name.contains(subset) && name.ends_with(".parquet") {
+                Some(name.clone())
+            } else {
+                None
+            }
+        })
+        .collect();
+
+    if parquet_names.is_empty() {
+        return Err(DatasetError::LoadError {
+            dataset: dataset_name.to_string(),
+            subset: subset.to_string(),
+            reason: format!("No parquet files found for subset '{subset}'"),
+        });
+    }
+
+    parquet_names
+        .iter()
+        .map(|file_name| {
+            repo.get(file_name).map_err(|e| DatasetError::NetworkError {
+                dataset: dataset_name.to_string(),
+                subset: subset.to_string(),
+                reason: format!("Failed to download '{file_name}': {e}"),
+            })
+        })
+        .collect()
+}
+
 /// Load the first `num_docs` documents from a HuggingFace dataset.
 ///
 /// Downloads the dataset parquet files via `hf-hub` and extracts the `text`
@@ -38,55 +135,11 @@ pub fn load_documents(
     subset: &str,
     num_docs: usize,
 ) -> Result<Vec<String>, DatasetError> {
-    let api = Api::new().map_err(|e| DatasetError::NetworkError {
-        dataset: dataset_name.to_string(),
-        subset: subset.to_string(),
-        reason: format!("Failed to initialise HuggingFace Hub API: {e}"),
-    })?;
-
-    // The wikipedia dataset stores parquet files under
-    // `data/<subset>/train-*.parquet` inside the dataset repo.
-    let repo = api.dataset(dataset_name.to_string());
-
-    // List available parquet files for this subset.
-    let info = repo.info().map_err(|e| DatasetError::NetworkError {
-        dataset: dataset_name.to_string(),
-        subset: subset.to_string(),
-        reason: format!("Failed to fetch dataset info: {e}"),
-    })?;
-
-    // Filter siblings to find parquet files for the requested subset.
-    let parquet_files: Vec<String> = info
-        .siblings
-        .iter()
-        .filter_map(|s| {
-            let name = &s.rfilename;
-            if name.contains(subset) && name.ends_with(".parquet") {
-                Some(name.clone())
-            } else {
-                None
-            }
-        })
-        .collect();
-
-    if parquet_files.is_empty() {
-        return Err(DatasetError::LoadError {
-            dataset: dataset_name.to_string(),
-            subset: subset.to_string(),
-            reason: format!("No parquet files found for subset '{subset}'"),
-        });
-    }
-
+    let parquet_paths = resolve_parquet_files(dataset_name, subset)?;
     let mut documents: Vec<String> = Vec::with_capacity(num_docs);
 
-    'outer: for file_name in &parquet_files {
-        let local_path = repo.get(file_name).map_err(|e| DatasetError::NetworkError {
-            dataset: dataset_name.to_string(),
-            subset: subset.to_string(),
-            reason: format!("Failed to download '{file_name}': {e}"),
-        })?;
-
-        let file = File::open(&local_path).map_err(|e| DatasetError::LoadError {
+    'outer: for local_path in &parquet_paths {
+        let file = File::open(local_path).map_err(|e| DatasetError::LoadError {
             dataset: dataset_name.to_string(),
             subset: subset.to_string(),
             reason: format!("Failed to open parquet file '{}': {e}", local_path.display()),

@@ -76,12 +76,23 @@ fn main() {
         Ok(e) => e,
         Err(e) => {
             eprintln!(
-                "Warning: embedding failed ({}). Using zero embeddings as fallback.",
+                "Warning: embedding failed ({}). Using random embeddings as fallback.",
                 e
             );
-            // Fallback: zero embeddings — index will still build but similarity
-            // scores will be meaningless.
-            chunks.iter().map(|_| [0f32; 384]).collect()
+            // Fallback: random embeddings — index will build correctly but
+            // similarity scores will be meaningless (retrieval is random).
+            chunks
+                .iter()
+                .enumerate()
+                .map(|(i, _)| {
+                    let mut arr = [0f32; 384];
+                    for (j, v) in arr.iter_mut().enumerate() {
+                        // Deterministic pseudo-random using chunk index
+                        *v = ((i * 384 + j) as f32 * 0.001).sin();
+                    }
+                    arr
+                })
+                .collect()
         }
     };
     let embedding_phase_ms = embed_start.elapsed().as_secs_f64() * 1000.0;
@@ -155,7 +166,13 @@ fn main() {
         // a. Embed query
         let query_embedding: [f32; 384] = match embedder::embed_chunks(&[question.clone()]) {
             Ok(mut e) if !e.is_empty() => e.remove(0),
-            _ => [0f32; 384], // fallback zero embedding
+            _ => {
+                let mut arr = [0f32; 384];
+                for (j, v) in arr.iter_mut().enumerate() {
+                    *v = (j as f32 * 0.001).sin();
+                }
+                arr
+            }
         };
 
         // a. Retrieve top-k chunks — record retrieval_ms
@@ -180,8 +197,8 @@ fn main() {
         };
         let retrieval_ms = retrieval_start.elapsed().as_secs_f64() * 1000.0;
 
-        // b. Generate answer — record ttft_ms, generation_ms, total_tokens
-        let response = match llm_client::generate(&question, &retrieved_chunks, &cfg.llm_host, 3) {
+    // b. Generate answer — record ttft_ms, generation_ms, total_tokens
+        let response = match llm_client::generate(&question, &retrieved_chunks, &cfg.llm_host, &cfg.llm_model, 3) {
             Ok(r) => r,
             Err(e) => {
                 let end_to_end_ms = e2e_start.elapsed().as_secs_f64() * 1000.0;

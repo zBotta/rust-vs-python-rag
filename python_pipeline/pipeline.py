@@ -6,8 +6,33 @@ metrics_python.jsonl to output_dir.
 """
 from __future__ import annotations
 
-import json
+# ---------------------------------------------------------------------------
+# SSL bypass — must happen before any network library is imported.
+# Set DISABLE_SSL_VERIFY=1 when behind a corporate proxy with SSL inspection.
+# ---------------------------------------------------------------------------
 import os
+if os.environ.get("DISABLE_SSL_VERIFY", "").lower() in ("1", "true", "yes"):
+    import ssl
+    import urllib.request
+    ssl._create_default_https_context = ssl._create_unverified_context
+    os.environ["CURL_CA_BUNDLE"] = ""
+    os.environ["REQUESTS_CA_BUNDLE"] = ""
+    os.environ["SSL_CERT_FILE"] = ""
+    os.environ["HF_HUB_DISABLE_SSL_VERIFICATION"] = "1"
+    # Patch httpx globally before huggingface_hub imports it
+    import httpx
+    _orig_client = httpx.Client.__init__
+    def _patched_client(self, *a, **kw):
+        kw.setdefault("verify", False)
+        _orig_client(self, *a, **kw)
+    httpx.Client.__init__ = _patched_client  # type: ignore[method-assign]
+    _orig_async = httpx.AsyncClient.__init__
+    def _patched_async(self, *a, **kw):
+        kw.setdefault("verify", False)
+        _orig_async(self, *a, **kw)
+    httpx.AsyncClient.__init__ = _patched_async  # type: ignore[method-assign]
+
+import json
 import time
 from pathlib import Path
 
@@ -93,6 +118,7 @@ def run_pipeline(config_path: str = "benchmark_config.toml") -> None:
                 query=question,
                 chunks=retrieved_chunks,
                 llm_host=cfg.llm_host,
+                model=cfg.llm_model,
             )
 
             # c. Record end-to-end latency

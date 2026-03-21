@@ -23,7 +23,7 @@ echo "==> Initialising uv project..."
 uv init --python ">=3.11" --no-workspace 2>/dev/null || true   # idempotent
 
 echo "==> Installing Python dependencies..."
-uv add -r requirements.in -c requirements.txt
+uv add langchain-text-splitters datasets sentence-transformers hnswlib httpx matplotlib numpy pytest hypothesis respx tomli
 
 echo "==> Syncing environment..."
 uv sync

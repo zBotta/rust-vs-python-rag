@@ -48,6 +48,8 @@ Follow the instructions at <https://ollama.com/download> for your platform, then
 ollama pull llama3.2:3b
 ```
 
+If not working due to proxy issues, go to the local LLM from HuggingFace part [here](#using-a-local-huggingface-model)
+
 ---
 
 ## Installation / Setup
@@ -116,6 +118,57 @@ Override the LLM model at runtime via the `BENCHMARK_MODEL` environment variable
 ```bash
 BENCHMARK_MODEL=mistral:7b bash run_benchmark.sh
 ```
+
+### Using a Local HuggingFace Model
+
+(Proxy-Free Setup)
+
+If you have issues with a corporate proxy blocking model downloads, you can serve a locally downloaded HuggingFace GGUF model through Ollama. The steps below use `wareef/LFM2-8B-A1B-Q4_K_M-GGUF` as an example, which fits comfortably in 8 GB of GPU memory.
+
+**Step 1 — Download the model from HuggingFace:**
+
+Download model .gguf file (we recommend the Q_4_K_M for a 8 GB GPU computer) from its HuggingFace repo [wareef/LFM2-8B-A1B-Q4_K_M-GGUF](https://huggingface.co/LiquidAI/LFM2-8B-A1B-GGUF/tree/main)
+
+After downloading, check the exact filename inside `./models/` — it may differ slightly from the repo name.
+
+**Step 2 — Create a `Modelfile` in the project root:**
+
+```
+FROM ./models/LFM2-8B-A1B-Q4_K_M.gguf
+
+PARAMETER num_ctx 4096
+PARAMETER num_gpu 99
+```
+
+`num_gpu 99` offloads as many layers as possible to the GPU.
+
+**Step 3 — Register the model with Ollama:**
+
+```bash
+ollama create lfm2-8b -f Modelfile
+ollama list   # verify it appears
+```
+
+**Step 4 — Update `benchmark_config.toml`:**
+
+```toml
+llm_model = "lfm2-8b"
+llm_host  = "http://localhost:11434"
+```
+
+**Step 5 — Start Ollama and verify:**
+
+```bash
+ollama serve
+
+curl http://localhost:11434/api/generate -d '{
+  "model": "lfm2-8b",
+  "prompt": "Hello",
+  "stream": false
+}'
+```
+
+No code changes are required — both pipelines read `llm_model` from `benchmark_config.toml` and route requests to the local Ollama server.
 
 ---
 

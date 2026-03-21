@@ -39,10 +39,11 @@ def generate(
     query: str,
     chunks: list[str],
     llm_host: str = "http://localhost:11434",
+    model: str = "llama3.2:3b",
     max_retries: int = 3,
 ) -> LLMResponse:
     """Send prompt to Ollama and return LLMResponse with timing metrics."""
-    model = os.environ.get("BENCHMARK_MODEL", "llama3.2:3b")
+    model = os.environ.get("BENCHMARK_MODEL", model)
     prompt = build_prompt(chunks, query)
 
     payload = {
