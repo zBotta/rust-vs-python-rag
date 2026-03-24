@@ -15,6 +15,7 @@
 # Options (env vars):
 #   $env:SKIP_OLLAMA    = "1"   Skip the ollama_http backend
 #   $env:SKIP_LLAMA_CPP = "1"   Skip the llama_cpp backend
+#   $env:SKIP_LLAMA_CPP_PROBE = "1"   Skip standalone Rust llama_cpp loader probe
 #   $env:SKIP_LLM_RS    = "1"   Skip the llm_rs backend
 #   $env:DISABLE_SSL_VERIFY = "1"  Bypass SSL verification
 
@@ -120,6 +121,76 @@ function Test-OutputHealthy([string]$Output) {
 }
 
 # ---------------------------------------------------------------------------
+# Helper: prepare LLVM env vars for llama_cpp_sys builds (Windows)
+# ---------------------------------------------------------------------------
+function Set-LlamaCppBuildEnv() {
+    $llvmBin = "C:\Program Files\LLVM\bin"
+    if (-not (Test-Path $llvmBin)) {
+        return $false
+    }
+
+    $env:PATH = "$llvmBin;$env:PATH"
+    $env:LIBCLANG_PATH = $llvmBin
+
+    $nm = Join-Path $llvmBin "llvm-nm.exe"
+    if (Test-Path $nm) {
+        $env:NM_PATH = $nm
+    }
+
+    $objcopy = Join-Path $llvmBin "llvm-objcopy.exe"
+    if (Test-Path $objcopy) {
+        $env:OBJCOPY_PATH = $objcopy
+    }
+
+    return $true
+}
+
+# ---------------------------------------------------------------------------
+# Helper: run standalone llama_cpp loader probe for detailed diagnostics
+# ---------------------------------------------------------------------------
+function Invoke-LlamaCppProbe([string]$ModelPath) {
+    if ($env:SKIP_LLAMA_CPP_PROBE -eq "1") {
+        Write-Host "  [Probe] Skipped (SKIP_LLAMA_CPP_PROBE=1)" -ForegroundColor DarkGray
+        return $true
+    }
+
+    if (-not (Test-Path "rust_pipeline\src\bin\llama_cpp_probe.rs")) {
+        Write-Host "  [Probe] Not found: rust_pipeline/src/bin/llama_cpp_probe.rs" -ForegroundColor Yellow
+        return $true
+    }
+
+    Write-Host "  [Probe] Running Rust llama_cpp loader probe..." -ForegroundColor DarkCyan
+    $llvmReady = Set-LlamaCppBuildEnv
+    if (-not $llvmReady) {
+        Write-Host "  [Probe] LLVM not found at C:\Program Files\LLVM\bin" -ForegroundColor Yellow
+    }
+
+    $ok = Invoke-Streaming @(
+        "cargo",
+        "run",
+        "--release",
+        "--manifest-path",
+        "rust_pipeline/Cargo.toml",
+        "--features",
+        "llama_cpp_backend",
+        "--bin",
+        "llama_cpp_probe",
+        "--",
+        $ModelPath
+    )
+
+    if ($ok) {
+        Write-Host "  [Probe] PASS" -ForegroundColor Green
+        return $true
+    }
+
+    Write-Host "  [Probe] FAIL" -ForegroundColor Red
+    Write-Host "    Tip: ensure LLVM is installed and env vars are set (LIBCLANG_PATH, NM_PATH, OBJCOPY_PATH)." -ForegroundColor Yellow
+    Write-Host "    Tip: this usually indicates a model compatibility/load issue for the selected GGUF." -ForegroundColor Yellow
+    return $false
+}
+
+# ---------------------------------------------------------------------------
 # Helper: run one backend smoke test
 # ---------------------------------------------------------------------------
 function Invoke-PreflightBackend([string]$Backend) {
@@ -129,6 +200,15 @@ function Invoke-PreflightBackend([string]$Backend) {
     Write-Host "--------------------------------------------------------" -ForegroundColor Cyan
 
     Set-ConfigValue "llm_backend" $Backend
+
+    if ($Backend -eq "llama_cpp") {
+        if (-not (Invoke-LlamaCppProbe $GgufPath)) {
+            $results[$Backend] = $false
+            Write-Host "  RESULT: $Backend - FAIL" -ForegroundColor Red
+            Write-Host "    Standalone probe failed; skipping benchmark smoke run for this backend." -ForegroundColor Yellow
+            return
+        }
+    }
 
     $pythonOk = $true
     $rustOk   = $true
@@ -151,9 +231,9 @@ function Invoke-PreflightBackend([string]$Backend) {
     $results[$Backend] = $overallOk
 
     if ($overallOk) {
-        Write-Host "  RESULT: $Backend — PASS" -ForegroundColor Green
+        Write-Host "  RESULT: $Backend - PASS" -ForegroundColor Green
     } else {
-        Write-Host "  RESULT: $Backend — FAIL" -ForegroundColor Red
+        Write-Host "  RESULT: $Backend - FAIL" -ForegroundColor Red
         if (-not $pythonOk -and $Backend -ne "llm_rs") {
             Write-Host "    Python pipeline failed. Check output above." -ForegroundColor Yellow
         }

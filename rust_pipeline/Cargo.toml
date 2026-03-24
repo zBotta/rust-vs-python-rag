@@ -24,10 +24,8 @@ reqwest = { version = "0.12", features = ["blocking", "json", "rustls-tls"], def
 candle-core = { version = "0.8", features = [] }
 candle-transformers = { version = "0.8" }
 candle-nn = { version = "0.8" }
-# llama_cpp = "0.3"  — DISABLED: requires libclang (LLVM).
-# To enable: winget install --id LLVM.LLVM -e, restart shell, then
-# uncomment and rebuild with: cargo build --release --features llama_cpp_backend
-# llama_cpp = { version = "0.3", optional = true }
+# Optional llama.cpp Rust bindings (requires LLVM/libclang at build time).
+llama_cpp = { version = "0.3", optional = true }
 rayon = "1"
 sysinfo = "0.31"
 dirs-next = "2"
@@ -40,4 +38,4 @@ tempfile = "3"
 # Enable the llama_cpp in-process backend (requires libclang / LLVM installed).
 # Install: winget install --id LLVM.LLVM -e
 # Then rebuild: cargo build --release --features llama_cpp_backend
-llama_cpp_backend = []
+llama_cpp_backend = ["dep:llama_cpp"]

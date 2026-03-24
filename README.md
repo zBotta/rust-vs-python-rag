@@ -231,6 +231,59 @@ When `llm_backend = "llama_cpp"` or `"llm_rs"`, you must set `gguf_model_path` t
 
 When `llm_backend = "llm_rs"`, the Python pipeline exits cleanly with the message `"Python pipeline skipped: llm_rs backend is Rust-only"` and the report generator produces a single-pipeline (Rust-only) report.
 
+### Rust llama.cpp Setup (Windows)
+
+The Rust `llama_cpp` backend requires LLVM tooling at build time.
+
+1. Install LLVM:
+
+```powershell
+winget install --id LLVM.LLVM -e
+```
+
+2. Open a new terminal, then confirm LLVM tools exist:
+
+```powershell
+Test-Path "C:\Program Files\LLVM\bin\libclang.dll"
+Test-Path "C:\Program Files\LLVM\bin\llvm-nm.exe"
+Test-Path "C:\Program Files\LLVM\bin\llvm-objcopy.exe"
+```
+
+3. Set required environment variables for the current shell:
+
+```powershell
+$llvmBin = "C:\Program Files\LLVM\bin"
+$env:PATH = "$llvmBin;$env:PATH"
+$env:LIBCLANG_PATH = $llvmBin
+$env:NM_PATH = "$llvmBin\llvm-nm.exe"
+$env:OBJCOPY_PATH = "$llvmBin\llvm-objcopy.exe"
+```
+
+4. Build Rust pipeline with the llama.cpp feature enabled:
+
+```powershell
+cargo build --release --manifest-path rust_pipeline/Cargo.toml --features llama_cpp_backend
+```
+
+5. Configure `benchmark_config.toml` for in-process llama.cpp:
+
+```toml
+llm_backend     = "llama_cpp"
+gguf_model_path = "C:\\Users\\you\\.models\\Llama-3.2-1B-Instruct-Q4_K_S.gguf"
+```
+
+If the build fails with missing `nm`/`objcopy`, verify `NM_PATH` and `OBJCOPY_PATH` point to the LLVM executables above.
+
+### Rust llama.cpp Loader Probe
+
+For model-load diagnostics (before running the full benchmark), run the standalone probe binary:
+
+```powershell
+cargo run --release --manifest-path rust_pipeline/Cargo.toml --features llama_cpp_backend --bin llama_cpp_probe -- "C:\Users\you\.models\Llama-3.2-1B-Instruct-Q4_K_S.gguf"
+```
+
+The probe prints file metadata and attempts model loading with multiple parameter sets to provide more detailed failure context.
+
 ### Stress Test Mode
 
 Set `stress_test.enabled = true` in `benchmark_config.toml` to run a concurrent load test after the standard sequential benchmark:
@@ -427,6 +480,26 @@ gguf_model_path = "C:\\Users\\you\\.models\\LFM2-8B-A1B-Q4_K_M.gguf"
 ```
 
 Or switch to `llm_backend = "ollama_http"` if you have Ollama running.
+
+**Rust llama_cpp build fails on Windows (`libclang`, `nm`, or `objcopy` not found):**
+
+Set LLVM paths in your PowerShell session, then rebuild with the backend feature:
+
+```powershell
+$llvmBin = "C:\Program Files\LLVM\bin"
+$env:PATH = "$llvmBin;$env:PATH"
+$env:LIBCLANG_PATH = $llvmBin
+$env:NM_PATH = "$llvmBin\llvm-nm.exe"
+$env:OBJCOPY_PATH = "$llvmBin\llvm-objcopy.exe"
+
+cargo build --release --manifest-path rust_pipeline/Cargo.toml --features llama_cpp_backend
+```
+
+If model loading still fails for a specific GGUF (for example `Llama-3.2-1B-Instruct-Q4_K_S.gguf`), run the standalone probe to capture diagnostics:
+
+```powershell
+cargo run --release --manifest-path rust_pipeline/Cargo.toml --features llama_cpp_backend --bin llama_cpp_probe -- "C:\Users\you\.models\Llama-3.2-1B-Instruct-Q4_K_S.gguf"
+```
 
 **Parquet dataset missing (Rust pipeline):**
 The benchmark scripts auto-download it via `download_parquet.py` if not present in `data/`. Run manually with:

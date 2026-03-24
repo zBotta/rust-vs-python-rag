@@ -24,7 +24,12 @@
 use std::time::Instant;
 
 #[cfg(feature = "llama_cpp_backend")]
-use llama_cpp::{LlamaModel, LlamaParams, SessionParams, StandardSampler};
+use llama_cpp::{
+    standard_sampler::StandardSampler,
+    LlamaModel,
+    LlamaParams,
+    SessionParams,
+};
 
 use crate::llm_client::{build_prompt, LlmClient, LlmError, LLMResponse};
 
@@ -53,7 +58,13 @@ impl LlamaCppClient {
             )));
         }
 
-        let model = LlamaModel::load_from_file(model_path, LlamaParams::default()).map_err(|e| {
+        let mut params = LlamaParams::default();
+        // Prefer conservative defaults for wider compatibility on Windows.
+        params.n_gpu_layers = 0;
+        params.use_mmap = false;
+        params.use_mlock = false;
+
+        let model = LlamaModel::load_from_file(model_path, params).map_err(|e| {
             LlmError::RequestFailed(format!(
                 "Failed to load GGUF model from '{}': {:?}",
                 model_path, e
@@ -69,7 +80,12 @@ impl LlmClient for LlamaCppClient {
     fn generate(&self, query: &str, chunks: &[String]) -> Result<LLMResponse, LlmError> {
         let prompt = build_prompt(chunks, query);
 
-        let mut ctx = match self.model.create_session(SessionParams::default()) {
+        let mut session_params = SessionParams::default();
+        session_params.n_ctx = 4096;
+        session_params.n_batch = 4096;
+        session_params.n_ubatch = 4096;
+
+        let mut ctx = match self.model.create_session(session_params) {
             Ok(s) => s,
             Err(e) => {
                 return Ok(LLMResponse {
@@ -99,7 +115,19 @@ impl LlmClient for LlamaCppClient {
         let mut ttft_ms: f64 = 0.0;
         let mut first_token = true;
 
-        let completions = ctx.start_completing_with(StandardSampler::default(), 256);
+        let completions = match ctx.start_completing_with(StandardSampler::default(), 256) {
+            Ok(c) => c,
+            Err(e) => {
+                return Ok(LLMResponse {
+                    text: String::new(),
+                    total_tokens: 0,
+                    ttft_ms: 0.0,
+                    generation_ms: 0.0,
+                    failed: true,
+                    failure_reason: Some(format!("Failed to start completion: {:?}", e)),
+                });
+            }
+        };
         for token_str in completions.into_strings() {
             if first_token {
                 ttft_ms = start.elapsed().as_secs_f64() * 1000.0;
